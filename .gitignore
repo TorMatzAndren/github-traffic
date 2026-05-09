@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.sqlite
+*.sqlite3
+*.db
+.env
+*.token
+github-traffic.ini
+github-traffic.local.ini
