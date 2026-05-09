@@ -203,7 +203,12 @@ textarea {
     </div>
     <h3>Command</h3>
     <pre id="eventCommand"></pre>
-    <button id="copyEventCommand">Copy command</button>
+    <div class="controls">
+      <button id="copyEventCommand">Copy command</button>
+      <button id="runEventLocal" class="hidden">Run locally</button>
+      <button id="regenerateLocal" class="hidden">Regenerate dashboard</button>
+    </div>
+    <div class="muted" id="localApiStatus">Local API not connected. Public/static mode: copy and run the command manually.</div>
   </div>
 </div>
 
@@ -640,6 +645,50 @@ function shellQuote(value) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
+function eventPayloadFromForm() {
+  const payload = {
+    id: document.getElementById("eventUpdateId").value || null,
+    repo: document.getElementById("eventRepo").value,
+    event_type: document.getElementById("eventType").value,
+    platform: document.getElementById("eventPlatform").value,
+    location: document.getElementById("eventLocation").value || null,
+    framework: document.getElementById("eventFramework").value || null,
+    trail_days: Number(document.getElementById("eventTrailDays").value || 3),
+    url: document.getElementById("eventUrl").value || null,
+    title: document.getElementById("eventTitle").value || "Untitled event",
+    event_time_utc: document.getElementById("eventTime").value,
+    notes: document.getElementById("eventNotes").value || null
+  };
+
+  if (!payload.id) delete payload.id;
+  return payload;
+}
+
+async function localApi(path, payload) {
+  const res = await fetch("http://127.0.0.1:8765" + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {})
+  });
+  return await res.json();
+}
+
+async function checkLocalApi() {
+  try {
+    const res = await fetch("http://127.0.0.1:8765/health");
+    const data = await res.json();
+    if (!data.ok) throw new Error("health check failed");
+
+    document.getElementById("runEventLocal")?.classList.remove("hidden");
+    document.getElementById("regenerateLocal")?.classList.remove("hidden");
+    const status = document.getElementById("localApiStatus");
+    if (status) status.textContent = "Local API connected. Run locally is available.";
+  } catch {
+    const status = document.getElementById("localApiStatus");
+    if (status) status.textContent = "Local API not connected. Public/static mode: copy and run the command manually.";
+  }
+}
+
 function initEventModal() {
   const modal = document.getElementById("eventModal");
   const open = document.getElementById("addEventButton");
@@ -694,6 +743,24 @@ function initEventModal() {
   document.getElementById("copyEventCommand").onclick = async () => {
     await navigator.clipboard.writeText(command.textContent);
   };
+
+  document.getElementById("runEventLocal").onclick = async () => {
+    const status = document.getElementById("localApiStatus");
+    status.textContent = "Running local event action...";
+    const result = await localApi("/events/upsert", eventPayloadFromForm());
+    status.textContent = result.ok
+      ? `Event ${result.action || "saved"} with id ${result.id}. Dashboard regenerated. Refreshing...`
+      : `Local action failed: ${result.error || "unknown error"}`;
+    if (result.ok) setTimeout(() => location.reload(), 800);
+  };
+
+  document.getElementById("regenerateLocal").onclick = async () => {
+    const status = document.getElementById("localApiStatus");
+    status.textContent = "Regenerating dashboard...";
+    const result = await localApi("/dashboard/regenerate", {});
+    status.textContent = result.ok ? "Dashboard regenerated. Refreshing..." : `Regeneration failed: ${result.error || result.stderr || "unknown error"}`;
+    if (result.ok) setTimeout(() => location.reload(), 800);
+  };
 }
 
 window.editEvent = function(id) {
@@ -723,6 +790,7 @@ document.querySelectorAll("button[data-window]").forEach(btn => {
 });
 
 initEventModal();
+checkLocalApi();
 
 document.addEventListener("input", ev => {
   if (ev.target && ev.target.id === "repoSearch") renderAll();
