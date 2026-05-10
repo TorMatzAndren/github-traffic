@@ -200,7 +200,7 @@ textarea {
 <header>
   <div class="title-row">
   <a class="jarri-link" href="https://jarri.systems" target="_blank" rel="noopener noreferrer">
-    <img class="jarri-logo" src="../docs/images/jarri-logo.png" alt="Jarri">
+    <img class="jarri-logo" src="jarri-logo.png" alt="Jarri">
   </a>
   <div>
     <h1>GitHub Traffic Intelligence</h1>
