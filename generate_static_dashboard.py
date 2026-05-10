@@ -45,7 +45,34 @@ header {
   border-bottom: 1px solid var(--line);
   background: linear-gradient(135deg, #101724, #090c11);
 }
-h1 { margin: 0 0 8px; font-size: 28px; }
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.jarri-link {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.jarri-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 14px;
+  box-shadow: 0 0 18px rgba(125, 211, 252, 0.18);
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+h1 { margin: 0 0 4px; font-size: 28px; }
 h2 { margin: 0 0 14px; font-size: 18px; }
 h3 { margin: 0 0 8px; font-size: 15px; }
 p { color: var(--muted); }
@@ -171,7 +198,15 @@ textarea {
 </head>
 <body>
 <header>
-  <h1>GitHub Traffic Intelligence</h1>
+  <div class="title-row">
+  <a class="jarri-link" href="https://jarri.systems" target="_blank" rel="noopener noreferrer">
+    <img class="jarri-logo" src="../docs/images/jarri-logo.png" alt="Jarri">
+  </a>
+  <div>
+    <h1>GitHub Traffic Intelligence</h1>
+    <p class="subtitle">Local-first repository traffic intelligence and historical archival</p>
+  </div>
+</div>
   <div class="muted" id="subtitle"></div>
   <div class="controls">
     <select id="repoSelect"></select>
