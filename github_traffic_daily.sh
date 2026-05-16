@@ -13,7 +13,16 @@ mkdir -p "$LOG_DIR"
   cd "$PROJECT_DIR"
 
   python3 github_traffic_collect.py --verbose
-  python3 generate_static_dashboard.py
+
+  latest_status="$(sqlite3 "$HOME/github-traffic/github-traffic.sqlite3" "SELECT status FROM collection_runs ORDER BY id DESC LIMIT 1;")"
+  echo "Latest collection status: $latest_status"
+
+  if [[ "$latest_status" == "completed_new_daily_data" || "$latest_status" == "completed" ]]; then
+    python3 generate_static_dashboard.py
+    echo "Dashboard regenerated because new daily data was detected."
+  else
+    echo "Dashboard regeneration skipped because no new daily data was detected."
+  fi
 
   echo "=== Done: $(date -Is) ==="
 } >> "$LOG_FILE" 2>&1

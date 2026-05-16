@@ -640,9 +640,10 @@ def store_raw_response(
     )
 
 
-def normalize_clones(conn: sqlite3.Connection, run_id: int, repository_id: int, data: Any) -> None:
+def normalize_clones(conn: sqlite3.Connection, run_id: int, repository_id: int, data: Any) -> bool:
+    changed = False
     if not isinstance(data, dict) or not isinstance(data.get("clones"), list):
-        return
+        return changed
     now = utc_now_iso()
     for item in data["clones"]:
         if not isinstance(item, dict):
@@ -650,6 +651,22 @@ def normalize_clones(conn: sqlite3.Connection, run_id: int, repository_id: int, 
         timestamp = item.get("timestamp")
         if not isinstance(timestamp, str):
             continue
+        day_utc = timestamp[:10]
+        count = int(item.get("count") or 0)
+        uniques = int(item.get("uniques") or 0)
+
+        existing = conn.execute(
+            """
+            SELECT count, uniques
+            FROM traffic_clones_daily
+            WHERE repository_id = ? AND day_utc = ?
+            """,
+            (repository_id, day_utc),
+        ).fetchone()
+
+        if existing is None or int(existing["count"]) != count or int(existing["uniques"]) != uniques:
+            changed = True
+
         conn.execute(
             """
             INSERT INTO traffic_clones_daily (
@@ -663,13 +680,16 @@ def normalize_clones(conn: sqlite3.Connection, run_id: int, repository_id: int, 
                 source_run_id = excluded.source_run_id,
                 updated_at_utc = excluded.updated_at_utc
             """,
-            (repository_id, timestamp[:10], int(item.get("count") or 0), int(item.get("uniques") or 0), run_id, now),
+            (repository_id, day_utc, count, uniques, run_id, now),
         )
 
+    return changed
 
-def normalize_views(conn: sqlite3.Connection, run_id: int, repository_id: int, data: Any) -> None:
+
+def normalize_views(conn: sqlite3.Connection, run_id: int, repository_id: int, data: Any) -> bool:
+    changed = False
     if not isinstance(data, dict) or not isinstance(data.get("views"), list):
-        return
+        return changed
     now = utc_now_iso()
     for item in data["views"]:
         if not isinstance(item, dict):
@@ -677,6 +697,22 @@ def normalize_views(conn: sqlite3.Connection, run_id: int, repository_id: int, d
         timestamp = item.get("timestamp")
         if not isinstance(timestamp, str):
             continue
+        day_utc = timestamp[:10]
+        count = int(item.get("count") or 0)
+        uniques = int(item.get("uniques") or 0)
+
+        existing = conn.execute(
+            """
+            SELECT count, uniques
+            FROM traffic_views_daily
+            WHERE repository_id = ? AND day_utc = ?
+            """,
+            (repository_id, day_utc),
+        ).fetchone()
+
+        if existing is None or int(existing["count"]) != count or int(existing["uniques"]) != uniques:
+            changed = True
+
         conn.execute(
             """
             INSERT INTO traffic_views_daily (
@@ -690,8 +726,10 @@ def normalize_views(conn: sqlite3.Connection, run_id: int, repository_id: int, d
                 source_run_id = excluded.source_run_id,
                 updated_at_utc = excluded.updated_at_utc
             """,
-            (repository_id, timestamp[:10], int(item.get("count") or 0), int(item.get("uniques") or 0), run_id, now),
+            (repository_id, day_utc, count, uniques, run_id, now),
         )
+
+    return changed
 
 
 def normalize_popular_paths(conn: sqlite3.Connection, run_id: int, repository_id: int, data: Any) -> None:
@@ -768,17 +806,20 @@ def normalize_popular_referrers(conn: sqlite3.Connection, run_id: int, repositor
         )
 
 
-def normalize_endpoint(conn: sqlite3.Connection, run_id: int, repository_id: int, result: ApiResult) -> None:
+def normalize_endpoint(conn: sqlite3.Connection, run_id: int, repository_id: int, result: ApiResult) -> bool:
     if not result.ok:
-        return
+        return False
     if result.endpoint == "clones":
-        normalize_clones(conn, run_id, repository_id, result.data)
-    elif result.endpoint == "views":
-        normalize_views(conn, run_id, repository_id, result.data)
-    elif result.endpoint == "popular_paths":
+        return normalize_clones(conn, run_id, repository_id, result.data)
+    if result.endpoint == "views":
+        return normalize_views(conn, run_id, repository_id, result.data)
+    if result.endpoint == "popular_paths":
         normalize_popular_paths(conn, run_id, repository_id, result.data)
-    elif result.endpoint == "popular_referrers":
+        return False
+    if result.endpoint == "popular_referrers":
         normalize_popular_referrers(conn, run_id, repository_id, result.data)
+        return False
+    return False
 
 
 def parse_args() -> argparse.Namespace:
@@ -819,6 +860,7 @@ def main() -> int:
     init_schema(conn)
     run_id = create_run(conn, settings.owner, args.dry_run)
     failures = 0
+    daily_data_changed = False
 
     try:
         token = None if args.dry_run and not settings.discover_repos else read_token(settings.token_file)
@@ -876,7 +918,8 @@ def main() -> int:
             for endpoint in ENDPOINTS:
                 result = github_get(token, settings.owner, repo, endpoint)
                 store_raw_response(conn, run_id, repository_id, result)
-                normalize_endpoint(conn, run_id, repository_id, result)
+                if normalize_endpoint(conn, run_id, repository_id, result):
+                    daily_data_changed = True
                 conn.commit()
 
                 if result.ok:
@@ -886,8 +929,16 @@ def main() -> int:
                     failures += 1
                     print(f"  FAIL {settings.owner}/{repo} {endpoint}: {result.error or 'unknown error'}", file=sys.stderr)
 
-        finish_run(conn, run_id, "completed_with_failures" if failures else "completed")
-        return 1 if failures else 0
+        if failures:
+            finish_run(conn, run_id, "completed_with_failures")
+            return 1
+
+        finish_run(
+            conn,
+            run_id,
+            "completed_new_daily_data" if daily_data_changed else "completed_no_new_daily_data",
+        )
+        return 0
 
     except Exception as exc:
         finish_run(conn, run_id, "failed")
