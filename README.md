@@ -1,6 +1,6 @@
 # GitHub Traffic Intelligence
 
-Local-first GitHub repository traffic archival, promotion tracking, and traffic intelligence.
+Local-first GitHub repository traffic archival, promotion tracking, propagation intelligence, and repository observability.
 
 GitHub Traffic Intelligence persistently collects and structures GitHub repository traffic data into a local SQLite database, generating a static dashboard and historical intelligence layer over time.
 
@@ -8,12 +8,15 @@ Unlike GitHub’s built-in traffic graphs, this system preserves historical data
 
 - Reddit posts
 - Facebook posts
-- Release announcements
+- release announcements
 - README rewrites
-- Demo videos
-- Benchmark publications
-- Documentation pushes
-- Social media campaigns
+- demo videos
+- benchmark publications
+- documentation pushes
+- social media campaigns
+- fork activity
+- star/fork growth
+- external discovery events
 
 This project treats GitHub traffic as an intelligence surface rather than merely a statistics panel.
 
@@ -34,6 +37,7 @@ Without local archival:
 - growth trends become invisible
 - promotion impact becomes difficult to measure
 - repository evolution becomes hard to analyze
+- organic propagation becomes difficult to reconstruct
 
 This project solves that problem by continuously collecting:
 
@@ -41,19 +45,15 @@ This project solves that problem by continuously collecting:
 - repository clones
 - popular paths
 - referrers
+- repository metadata
+- stars
+- forks
+- fork lineage
+- metadata snapshots
 
-and preserving them locally forever.
+and preserving them locally.
 
-But this is not just archival.
-
-GitHub Traffic Intelligence also introduces:
-
-- promotion event overlays
-- campaign trail windows
-- framework grouping
-- traffic correlation
-- historical repository intelligence
-- local-first ownership of analytics
+The goal is long-term repository intelligence ownership.
 
 ---
 
@@ -65,12 +65,74 @@ Persist GitHub traffic history indefinitely into SQLite.
 
 Tracks:
 
-- Views
-- Unique viewers
-- Clones
-- Unique cloners
-- Popular paths
-- Popular referrers
+- views
+- unique viewers
+- clones
+- unique cloners
+- popular paths
+- popular referrers
+
+---
+
+## Propagation Intelligence
+
+Track how repository attention spreads over time.
+
+Current propagation surfaces include:
+
+- incoming link timeline
+- path timeline
+- referrer first-seen intelligence
+- path first-seen intelligence
+- propagation highlights
+- repository metadata timeline
+- star/fork/watch snapshots
+- fork lineage tables
+- fork tree views
+
+This helps answer questions such as:
+
+- Where did this traffic come from?
+- Which referrers appeared first?
+- Which paths attracted serious attention?
+- Did forks appear after a discovery event?
+- Did GitHub internal propagation compound after external exposure?
+
+---
+
+## Repository Metadata Intelligence
+
+Collects and preserves repository metadata including:
+
+- stars
+- watchers
+- forks
+- open issues
+- default branch
+- pushed timestamp
+- GitHub update timestamp
+- repository URL
+
+Metadata is snapshotted so growth can be analyzed historically.
+
+---
+
+## Fork Lineage
+
+Fork discovery is collected and displayed in the dashboard.
+
+Tracks:
+
+- fork full name
+- fork owner
+- fork repository name
+- fork creation date
+- last pushed date
+- default branch
+- fork stars
+- clickable fork links
+
+This allows the dashboard to function as a lightweight repository lineage observatory.
 
 ---
 
@@ -80,13 +142,13 @@ Attach real-world actions to traffic spikes.
 
 Examples:
 
-- Posted on `/r/git`
+- posted on `/r/git`
 - Facebook launch
-- Release announcement
-- Benchmark publication
-- New screenshots
+- release announcement
+- benchmark publication
+- new screenshots
 - README overhaul
-- Demo video release
+- demo video release
 
 Each event supports:
 
@@ -104,12 +166,17 @@ No external web server required.
 
 Generates a local static HTML dashboard with:
 
-- repository overview
+- repository overview cards
 - traffic charts
 - event overlays
 - referrer tables
+- path tables
 - inventory/ranking views
 - promotion timelines
+- propagation timelines
+- fork lineage
+- first-seen intelligence
+- metadata snapshots
 
 ---
 
@@ -149,7 +216,10 @@ Everything is stored locally:
 - normalized traffic tables
 - event metadata
 - repository inventory
+- repository metadata snapshots
+- fork lineage
 - collection runs
+- propagation history
 
 ---
 
@@ -176,8 +246,8 @@ Create a GitHub personal access token with repository traffic access.
 
 Recommended:
 
-- Fine-grained token
-- Read-only repository permissions
+- fine-grained token
+- read-only repository permissions
 
 GitHub:
 
@@ -223,6 +293,9 @@ This:
 
 - collects traffic
 - stores SQLite history
+- updates repository metadata
+- discovers forks
+- snapshots propagation surfaces
 - regenerates dashboard
 
 ---
@@ -243,14 +316,37 @@ The dashboard provides:
 - referrer intelligence
 - popular path tracking
 - repository ranking surfaces
+- incoming link timelines
+- path timelines
+- propagation highlights
+- first-seen intelligence
+- metadata timeline
+- fork lineage and fork tree views
 
 Top repositories are dynamically ranked by traffic activity and velocity.
 
 ---
 
+# Propagation Intelligence
+
+GitHub Traffic Intelligence can help reconstruct discovery chains such as:
+
+    Reddit discussion
+    → README traffic
+    → clone spike
+    → fork creation
+    → GitHub internal propagation
+    → secondary stars/forks
+
+This is especially useful because GitHub’s own traffic windows are temporary.
+
+The local database becomes the historical memory layer.
+
+---
+
 # Promotion Event System
 
-Promotion events are the core intelligence layer.
+Promotion events are the core manual intelligence layer.
 
 Example:
 
@@ -264,6 +360,17 @@ Traffic changes can then be correlated against real-world actions.
 ---
 
 # Example Workflows
+
+## Organic Discovery Investigation
+
+1. Notice unexpected clone/view spike
+2. Check incoming link timeline
+3. Check referrer first-seen table
+4. Check path first-seen table
+5. Check fork lineage
+6. Correlate against stars/forks/metadata timeline
+
+---
 
 ## Reddit Launch
 
@@ -296,7 +403,7 @@ Traffic changes can then be correlated against real-world actions.
 
     github_traffic_collect.py
 
-Collects GitHub traffic API endpoints.
+Collects GitHub API endpoints and normalizes traffic, metadata, and forks.
 
 ---
 
@@ -341,6 +448,25 @@ Optional localhost-only structured API.
 
     github_traffic_daily.sh
     setup_github_traffic.sh
+
+---
+
+# Database Design
+
+Primary tables:
+
+- collection_runs
+- repositories
+- repository_metadata_snapshots
+- repository_forks
+- traffic_views_daily
+- traffic_clones_daily
+- popular_paths_snapshot
+- popular_referrers_snapshot
+- raw_api_responses
+- promotion_events
+
+Both raw and normalized data are preserved.
 
 ---
 
@@ -393,6 +519,9 @@ Features:
 - localhost helper API
 - SQLite persistence
 - event intelligence
+- propagation intelligence
+- fork lineage
+- metadata snapshots
 
 No Jarri dependency.
 
@@ -408,23 +537,6 @@ Future goals:
 - jarri_cmd_api.py routing
 - integrated audit surfaces
 - Workspace-native visualization
-
----
-
-# Database Design
-
-Primary tables:
-
-- collection_runs
-- repositories
-- traffic_views_daily
-- traffic_clones_daily
-- popular_paths_snapshot
-- popular_referrers_snapshot
-- raw_api_responses
-- promotion_events
-
-Both raw and normalized data are preserved.
 
 ---
 
@@ -475,6 +587,9 @@ Planned future work:
 - comparative repository analytics
 - timeline overlays
 - traffic attribution systems
+- referrer/path correlation
+- fork activity scoring
+- repository propagation graphs
 - Jarri Workspace integration
 - advanced intelligence layers
 
@@ -488,5 +603,5 @@ MIT
 
 # Author
 
-Tor Matz Andren
+Tor Matz Andren  
 https://jarri.systems
