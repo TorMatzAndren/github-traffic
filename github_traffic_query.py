@@ -89,10 +89,68 @@ def repositories(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 html_url,
                 pushed_at,
                 github_updated_at,
+                COALESCE(stargazers_count, 0) AS stargazers_count,
+                COALESCE(watchers_count, 0) AS watchers_count,
+                COALESCE(forks_count, 0) AS forks_count,
+                COALESCE(stargazers_count, 0) AS stars,
+                COALESCE(forks_count, 0) AS forks,
                 updated_at_utc
             FROM repositories
             ORDER BY owner, repo
             """
+        ).fetchall()
+    )
+
+
+def repository_inventory(conn: sqlite3.Connection, days: int | None) -> list[dict[str, Any]]:
+    view_where, view_params = date_filter_sql("day_utc", days)
+    clone_where, clone_params = date_filter_sql("day_utc", days)
+
+    return rows_to_dicts(
+        conn.execute(
+            f"""
+            WITH recent_views AS (
+                SELECT repository_id, SUM(count) AS views, SUM(uniques) AS unique_viewers
+                FROM traffic_views_daily
+                {view_where}
+                GROUP BY repository_id
+            ),
+            recent_clones AS (
+                SELECT repository_id, SUM(count) AS clones, SUM(uniques) AS unique_cloners
+                FROM traffic_clones_daily
+                {clone_where}
+                GROUP BY repository_id
+            )
+            SELECT
+                r.id,
+                r.owner,
+                r.repo,
+                r.github_id,
+                r.full_name,
+                r.private,
+                r.fork,
+                r.archived,
+                r.disabled,
+                r.default_branch,
+                r.html_url,
+                r.pushed_at,
+                r.github_updated_at,
+                COALESCE(r.stargazers_count, 0) AS stargazers_count,
+                COALESCE(r.watchers_count, 0) AS watchers_count,
+                COALESCE(r.forks_count, 0) AS forks_count,
+                COALESCE(r.stargazers_count, 0) AS stars,
+                COALESCE(r.forks_count, 0) AS forks,
+                COALESCE(v.views, 0) AS views,
+                COALESCE(v.unique_viewers, 0) AS unique_viewers,
+                COALESCE(c.clones, 0) AS clones,
+                COALESCE(c.unique_cloners, 0) AS unique_cloners,
+                r.updated_at_utc
+            FROM repositories r
+            LEFT JOIN recent_views v ON v.repository_id = r.id
+            LEFT JOIN recent_clones c ON c.repository_id = r.id
+            ORDER BY views DESC, clones DESC, r.repo
+            """,
+            view_params + clone_params,
         ).fetchall()
     )
 
@@ -321,6 +379,270 @@ def raw_failures(conn: sqlite3.Connection, limit: int) -> list[dict[str, Any]]:
     )
 
 
+def referrer_timeline(conn: sqlite3.Connection, repo: str | None, limit: int) -> list[dict[str, Any]]:
+    params: list[Any] = []
+    repo_filter = ""
+
+    if repo:
+        repo_filter = "WHERE r.repo = ?"
+        params.append(repo)
+
+    params.append(limit)
+
+    return rows_to_dicts(conn.execute(f"""
+        SELECT
+            p.snapshot_date_utc,
+            r.owner,
+            r.repo,
+            p.referrer,
+            p.count,
+            p.uniques
+        FROM popular_referrers_snapshot p
+        JOIN repositories r ON r.id = p.repository_id
+        {repo_filter}
+        ORDER BY p.snapshot_date_utc DESC, p.count DESC, p.uniques DESC, r.repo, p.referrer
+        LIMIT ?
+    """, params).fetchall())
+
+
+def path_timeline(conn: sqlite3.Connection, repo: str | None, limit: int) -> list[dict[str, Any]]:
+    params: list[Any] = []
+    repo_filter = ""
+
+    if repo:
+        repo_filter = "WHERE r.repo = ?"
+        params.append(repo)
+
+    params.append(limit)
+
+    return rows_to_dicts(conn.execute(f"""
+        SELECT
+            p.snapshot_date_utc,
+            r.owner,
+            r.repo,
+            p.path,
+            p.title,
+            p.count,
+            p.uniques
+        FROM popular_paths_snapshot p
+        JOIN repositories r ON r.id = p.repository_id
+        {repo_filter}
+        ORDER BY p.snapshot_date_utc DESC, p.count DESC, p.uniques DESC, r.repo, p.path
+        LIMIT ?
+    """, params).fetchall())
+
+
+def metadata_timeline(conn: sqlite3.Connection, repo: str | None, limit: int) -> list[dict[str, Any]]:
+    if not has_table(conn, "repository_metadata_snapshots"):
+        return []
+
+    params: list[Any] = []
+    repo_filter = ""
+
+    if repo:
+        repo_filter = "WHERE r.repo = ?"
+        params.append(repo)
+
+    params.append(limit)
+
+    return rows_to_dicts(conn.execute(f"""
+        SELECT
+            m.snapshot_date_utc,
+            r.owner,
+            r.repo,
+            m.stargazers_count,
+            m.watchers_count,
+            m.forks_count,
+            m.open_issues_count
+        FROM repository_metadata_snapshots m
+        JOIN repositories r ON r.id = m.repository_id
+        {repo_filter}
+        ORDER BY m.snapshot_date_utc DESC, r.repo
+        LIMIT ?
+    """, params).fetchall())
+
+
+def referrer_first_seen(conn: sqlite3.Connection, repo: str | None, limit: int) -> list[dict[str, Any]]:
+    params: list[Any] = []
+    repo_filter = ""
+
+    if repo:
+        repo_filter = "WHERE r.repo = ?"
+        params.append(repo)
+
+    params.append(limit)
+
+    return rows_to_dicts(conn.execute(f"""
+        SELECT
+            r.owner,
+            r.repo,
+            p.referrer,
+            MIN(p.snapshot_date_utc) AS first_seen_date,
+            MAX(p.snapshot_date_utc) AS last_seen_date,
+            COUNT(DISTINCT p.snapshot_date_utc) AS days_seen,
+            MAX(p.count) AS peak_count,
+            MAX(p.uniques) AS peak_uniques,
+            SUM(p.count) AS total_count,
+            SUM(p.uniques) AS total_uniques
+        FROM popular_referrers_snapshot p
+        JOIN repositories r ON r.id = p.repository_id
+        {repo_filter}
+        GROUP BY r.owner, r.repo, p.referrer
+        ORDER BY first_seen_date DESC, peak_count DESC, total_count DESC
+        LIMIT ?
+    """, params).fetchall())
+
+
+def path_first_seen(conn: sqlite3.Connection, repo: str | None, limit: int) -> list[dict[str, Any]]:
+    params: list[Any] = []
+    repo_filter = ""
+
+    if repo:
+        repo_filter = "WHERE r.repo = ?"
+        params.append(repo)
+
+    params.append(limit)
+
+    return rows_to_dicts(conn.execute(f"""
+        SELECT
+            r.owner,
+            r.repo,
+            p.path,
+            MIN(p.snapshot_date_utc) AS first_seen_date,
+            MAX(p.snapshot_date_utc) AS last_seen_date,
+            COUNT(DISTINCT p.snapshot_date_utc) AS days_seen,
+            MAX(p.count) AS peak_count,
+            MAX(p.uniques) AS peak_uniques,
+            SUM(p.count) AS total_count,
+            SUM(p.uniques) AS total_uniques
+        FROM popular_paths_snapshot p
+        JOIN repositories r ON r.id = p.repository_id
+        {repo_filter}
+        GROUP BY r.owner, r.repo, p.path
+        ORDER BY first_seen_date DESC, peak_count DESC, total_count DESC
+        LIMIT ?
+    """, params).fetchall())
+
+
+def propagation_highlights(conn: sqlite3.Connection, repo: str | None, limit: int) -> list[dict[str, Any]]:
+    params: list[Any] = []
+    repo_filter = ""
+
+    if repo:
+        repo_filter = "AND r.repo = ?"
+        params.append(repo)
+
+    params.append(limit)
+
+    return rows_to_dicts(conn.execute(f"""
+        WITH latest_day AS (
+            SELECT MAX(snapshot_date_utc) AS day FROM popular_referrers_snapshot
+        ),
+        previous_referrers AS (
+            SELECT DISTINCT repository_id, referrer
+            FROM popular_referrers_snapshot
+            WHERE snapshot_date_utc < (SELECT day FROM latest_day)
+        ),
+        latest_referrers AS (
+            SELECT
+                r.owner,
+                r.repo,
+                'new_referrer' AS highlight_type,
+                p.referrer AS subject,
+                p.count,
+                p.uniques,
+                p.snapshot_date_utc
+            FROM popular_referrers_snapshot p
+            JOIN repositories r ON r.id = p.repository_id
+            LEFT JOIN previous_referrers prev
+              ON prev.repository_id = p.repository_id
+             AND prev.referrer = p.referrer
+            WHERE p.snapshot_date_utc = (SELECT day FROM latest_day)
+              AND prev.referrer IS NULL
+              {repo_filter}
+        ),
+        latest_path_day AS (
+            SELECT MAX(snapshot_date_utc) AS day FROM popular_paths_snapshot
+        ),
+        previous_paths AS (
+            SELECT DISTINCT repository_id, path
+            FROM popular_paths_snapshot
+            WHERE snapshot_date_utc < (SELECT day FROM latest_path_day)
+        ),
+        latest_paths AS (
+            SELECT
+                r.owner,
+                r.repo,
+                'new_path' AS highlight_type,
+                p.path AS subject,
+                p.count,
+                p.uniques,
+                p.snapshot_date_utc
+            FROM popular_paths_snapshot p
+            JOIN repositories r ON r.id = p.repository_id
+            LEFT JOIN previous_paths prev
+              ON prev.repository_id = p.repository_id
+             AND prev.path = p.path
+            WHERE p.snapshot_date_utc = (SELECT day FROM latest_path_day)
+              AND prev.path IS NULL
+              {repo_filter}
+        )
+        SELECT * FROM latest_referrers
+        UNION ALL
+        SELECT * FROM latest_paths
+        ORDER BY snapshot_date_utc DESC, count DESC, uniques DESC
+        LIMIT ?
+    """, params).fetchall())
+
+
+def repository_stars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute("""
+        SELECT
+            owner,
+            repo,
+            COALESCE(stargazers_count, 0) AS stargazers_count,
+            COALESCE(watchers_count, 0) AS watchers_count
+        FROM repositories
+        ORDER BY stargazers_count DESC
+    """).fetchall()
+
+    return [
+        {
+            "owner": r[0],
+            "repo": r[1],
+            "stars": r[2],
+            "watchers": r[3],
+        }
+        for r in rows
+    ]
+
+def repository_forks(conn: sqlite3.Connection, repo: str | None = None) -> list[dict[str, Any]]:
+    params: list[Any] = []
+    repo_filter = ""
+
+    if repo:
+        repo_filter = "WHERE r.repo = ?"
+        params.append(repo)
+
+    return rows_to_dicts(conn.execute(f"""
+        SELECT
+            r.owner,
+            r.repo,
+            f.fork_full_name,
+            f.fork_owner,
+            f.fork_repo,
+            f.fork_created_at,
+            f.default_branch,
+            f.html_url,
+            f.pushed_at,
+            COALESCE(f.stargazers_count, 0) AS stargazers_count
+        FROM repository_forks f
+        JOIN repositories r ON r.id = f.repository_id
+        {repo_filter}
+        ORDER BY f.pushed_at DESC
+    """, params).fetchall())
+
+
 def payload(conn: sqlite3.Connection, repo: str | None, days: int | None, limit: int) -> dict[str, Any]:
     return {
         "generated_at_utc": utc_now_iso(),
@@ -330,11 +652,19 @@ def payload(conn: sqlite3.Connection, repo: str | None, days: int | None, limit:
         "window_days": days,
         "history_bounds": history_bounds(conn),
         "latest_run": latest_run(conn),
-        "repositories": repositories(conn) if repo is None else [],
+        "repositories": repository_inventory(conn, days) if repo is None else [],
         "totals_by_repo": totals_by_repo(conn, days) if repo is None else [],
         "daily_series": daily_series(conn, repo, days),
         "latest_popular_paths": latest_paths(conn, repo, limit),
         "latest_popular_referrers": latest_referrers(conn, repo, limit),
+        "referrer_timeline": referrer_timeline(conn, repo, limit),
+        "path_timeline": path_timeline(conn, repo, limit),
+        "metadata_timeline": metadata_timeline(conn, repo, limit),
+        "referrer_first_seen": referrer_first_seen(conn, repo, limit),
+        "path_first_seen": path_first_seen(conn, repo, limit),
+        "propagation_highlights": propagation_highlights(conn, repo, limit),
+        "repository_stars": repository_stars(conn),
+        "repository_forks": repository_forks(conn, repo),
         "promotion_events": promotion_events(conn, repo, None),
         "recent_failures": raw_failures(conn, limit) if repo is None else [],
     }
@@ -375,3 +705,8 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
+
+

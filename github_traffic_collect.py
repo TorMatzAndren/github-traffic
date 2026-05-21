@@ -22,10 +22,12 @@ DEFAULT_DB = Path.home() / "github-traffic" / "github-traffic.sqlite3"
 DEFAULT_TOKEN_FILE = Path("/etc/tokens/github.token")
 
 ENDPOINTS = {
+    "repo": "/repos/{owner}/{repo}",
     "clones": "/repos/{owner}/{repo}/traffic/clones",
     "views": "/repos/{owner}/{repo}/traffic/views",
     "popular_paths": "/repos/{owner}/{repo}/traffic/popular/paths",
     "popular_referrers": "/repos/{owner}/{repo}/traffic/popular/referrers",
+    "forks": "/repos/{owner}/{repo}/forks",
 }
 
 
@@ -191,24 +193,60 @@ def init_schema(conn: sqlite3.Connection) -> None:
             created_at_utc TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS repositories (
+        
+        CREATE TABLE IF NOT EXISTS repository_metadata_snapshots (
+            repository_id INTEGER NOT NULL,
+            snapshot_date_utc TEXT NOT NULL,
+            stargazers_count INTEGER NOT NULL,
+            watchers_count INTEGER NOT NULL,
+            forks_count INTEGER NOT NULL,
+            open_issues_count INTEGER NOT NULL,
+            source_run_id INTEGER NOT NULL,
+            updated_at_utc TEXT NOT NULL,
+            FOREIGN KEY(repository_id) REFERENCES repositories(id),
+            FOREIGN KEY(source_run_id) REFERENCES collection_runs(id),
+            PRIMARY KEY(repository_id, snapshot_date_utc)
+        );
+
+        CREATE TABLE IF NOT EXISTS repository_forks (
             id INTEGER PRIMARY KEY,
-            owner TEXT NOT NULL,
-            repo TEXT NOT NULL,
-            github_id INTEGER,
-            full_name TEXT,
-            private INTEGER,
-            fork INTEGER,
-            archived INTEGER,
-            disabled INTEGER,
+            repository_id INTEGER NOT NULL,
+            fork_full_name TEXT NOT NULL,
+            fork_owner TEXT NOT NULL,
+            fork_repo TEXT NOT NULL,
+            fork_created_at TEXT,
             default_branch TEXT,
             html_url TEXT,
             pushed_at TEXT,
-            github_updated_at TEXT,
-            created_at_utc TEXT NOT NULL,
-            updated_at_utc TEXT NOT NULL,
-            UNIQUE(owner, repo)
+            stargazers_count INTEGER,
+            collected_at_utc TEXT NOT NULL,
+            UNIQUE(repository_id, fork_full_name)
         );
+
+
+    
+CREATE TABLE IF NOT EXISTS repositories (
+    id INTEGER PRIMARY KEY,
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    github_id INTEGER,
+    full_name TEXT,
+    private INTEGER,
+    fork INTEGER,
+    archived INTEGER,
+    disabled INTEGER,
+    default_branch TEXT,
+    html_url TEXT,
+    pushed_at TEXT,
+    github_updated_at TEXT,
+            stargazers_count INTEGER DEFAULT 0,
+            watchers_count INTEGER DEFAULT 0,
+            forks_count INTEGER DEFAULT 0,
+    created_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL,
+    UNIQUE(owner, repo)
+);
+
 
         CREATE TABLE IF NOT EXISTS repository_snapshots (
             id INTEGER PRIMARY KEY,
@@ -310,6 +348,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "repositories", "html_url", "TEXT")
     ensure_column(conn, "repositories", "pushed_at", "TEXT")
     ensure_column(conn, "repositories", "github_updated_at", "TEXT")
+    ensure_column(conn, "repositories", "stargazers_count", "INTEGER DEFAULT 0")
+    ensure_column(conn, "repositories", "watchers_count", "INTEGER DEFAULT 0")
+    ensure_column(conn, "repositories", "forks_count", "INTEGER DEFAULT 0")
     ensure_column(conn, "repositories", "updated_at_utc", "TEXT")
 
     conn.executescript(
@@ -336,6 +377,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
             ON popular_referrers_snapshot(snapshot_date_utc);
         """
     )
+    backfill_repository_metadata_from_stored_json(conn)
     conn.commit()
 
 
@@ -344,6 +386,61 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, column_type
     existing = {row["name"] for row in rows}
     if column not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def backfill_repository_metadata_from_stored_json(conn: sqlite3.Connection) -> None:
+    raw_rows = conn.execute(
+        """
+        WITH latest_repo_raw AS (
+            SELECT repository_id, MAX(id) AS id
+            FROM raw_api_responses
+            WHERE endpoint = 'repo'
+              AND ok = 1
+              AND response_json IS NOT NULL
+            GROUP BY repository_id
+        )
+        SELECT raw.repository_id, raw.response_json
+        FROM raw_api_responses raw
+        JOIN latest_repo_raw latest ON latest.id = raw.id
+        """
+    ).fetchall()
+
+    raw_repo_ids: set[int] = set()
+    for row in raw_rows:
+        raw_repo_ids.add(int(row["repository_id"]))
+        try:
+            repo_json = json.loads(row["response_json"])
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Invalid stored repo metadata JSON for repository_id={row['repository_id']}") from exc
+        if not isinstance(repo_json, dict):
+            raise RuntimeError(f"Stored repo metadata is not an object for repository_id={row['repository_id']}")
+        update_repository_metadata(conn, int(row["repository_id"]), repo_json)
+
+    snapshot_rows = conn.execute(
+        """
+        WITH latest_snapshot AS (
+            SELECT repository_id, MAX(id) AS id
+            FROM repository_snapshots
+            WHERE raw_json IS NOT NULL
+            GROUP BY repository_id
+        )
+        SELECT s.repository_id, s.raw_json
+        FROM repository_snapshots s
+        JOIN latest_snapshot latest ON latest.id = s.id
+        """
+    ).fetchall()
+
+    for row in snapshot_rows:
+        repository_id = int(row["repository_id"])
+        if repository_id in raw_repo_ids:
+            continue
+        try:
+            repo_json = json.loads(row["raw_json"])
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Invalid stored repository snapshot JSON for repository_id={repository_id}") from exc
+        if not isinstance(repo_json, dict):
+            raise RuntimeError(f"Stored repository snapshot is not an object for repository_id={repository_id}")
+        update_repository_metadata(conn, repository_id, repo_json)
 
 
 def create_run(conn: sqlite3.Connection, owner: str, dry_run: bool) -> int:
@@ -416,6 +513,9 @@ def update_repository_metadata(conn: sqlite3.Connection, repository_id: int, rep
             html_url = ?,
             pushed_at = ?,
             github_updated_at = ?,
+            stargazers_count = ?,
+            watchers_count = ?,
+            forks_count = ?,
             updated_at_utc = ?
         WHERE id = ?
         """,
@@ -430,6 +530,9 @@ def update_repository_metadata(conn: sqlite3.Connection, repository_id: int, rep
             repo_json.get("html_url"),
             repo_json.get("pushed_at"),
             repo_json.get("updated_at"),
+            int(repo_json.get("stargazers_count") or 0),
+            int(repo_json.get("watchers_count") or 0),
+            int(repo_json.get("forks_count") or repo_json.get("forks") or 0),
             now,
             repository_id,
         ),
@@ -806,19 +909,33 @@ def normalize_popular_referrers(conn: sqlite3.Connection, run_id: int, repositor
         )
 
 
+
 def normalize_endpoint(conn: sqlite3.Connection, run_id: int, repository_id: int, result: ApiResult) -> bool:
     if not result.ok:
         return False
+
     if result.endpoint == "clones":
         return normalize_clones(conn, run_id, repository_id, result.data)
+
     if result.endpoint == "views":
         return normalize_views(conn, run_id, repository_id, result.data)
+
     if result.endpoint == "popular_paths":
         normalize_popular_paths(conn, run_id, repository_id, result.data)
         return False
+
     if result.endpoint == "popular_referrers":
         normalize_popular_referrers(conn, run_id, repository_id, result.data)
         return False
+
+    if result.endpoint == "forks":
+        return normalize_forks(conn, run_id, repository_id, result.data)
+
+    if result.endpoint == "repo":
+        update_repository_metadata(conn, repository_id, result.data)
+        normalize_repository_metadata_snapshot(conn, run_id, repository_id, result.data)
+        return False
+
     return False
 
 
@@ -836,6 +953,99 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true", help="Print detailed non-secret progress.")
     return parser.parse_args()
 
+
+def normalize_repository_metadata_snapshot(conn: sqlite3.Connection, run_id: int, repository_id: int, data: Any) -> None:
+    if not isinstance(data, dict):
+        return
+
+    now = utc_now_iso()
+    snapshot_date = utc_date()
+
+    conn.execute("""
+        INSERT INTO repository_metadata_snapshots (
+            repository_id,
+            snapshot_date_utc,
+            stargazers_count,
+            watchers_count,
+            forks_count,
+            open_issues_count,
+            source_run_id,
+            updated_at_utc
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(repository_id, snapshot_date_utc)
+        DO UPDATE SET
+            stargazers_count = excluded.stargazers_count,
+            watchers_count = excluded.watchers_count,
+            forks_count = excluded.forks_count,
+            open_issues_count = excluded.open_issues_count,
+            source_run_id = excluded.source_run_id,
+            updated_at_utc = excluded.updated_at_utc
+    """, (
+        repository_id,
+        snapshot_date,
+        int(data.get("stargazers_count") or 0),
+        int(data.get("watchers_count") or 0),
+        int(data.get("forks_count") or data.get("forks") or 0),
+        int(data.get("open_issues_count") or 0),
+        run_id,
+        now,
+    ))
+
+
+def normalize_forks(conn: sqlite3.Connection, run_id: int, repository_id: int, data: Any) -> bool:
+    if not isinstance(data, list):
+        return False
+
+    now = utc_now_iso()
+    changed = False
+
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        owner = item.get("owner") or {}
+        if not isinstance(owner, dict):
+            owner = {}
+
+        conn.execute("""
+            INSERT INTO repository_forks (
+                repository_id,
+                fork_full_name,
+                fork_owner,
+                fork_repo,
+                fork_created_at,
+                default_branch,
+                html_url,
+                pushed_at,
+                stargazers_count,
+                collected_at_utc
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(repository_id, fork_full_name)
+            DO UPDATE SET
+                fork_created_at = excluded.fork_created_at,
+                default_branch = excluded.default_branch,
+                html_url = excluded.html_url,
+                pushed_at = excluded.pushed_at,
+                stargazers_count = excluded.stargazers_count,
+                collected_at_utc = excluded.collected_at_utc
+        """, (
+            repository_id,
+            item.get("full_name"),
+            owner.get("login"),
+            item.get("name"),
+            item.get("created_at"),
+            item.get("default_branch"),
+            item.get("html_url"),
+            item.get("pushed_at"),
+            int(item.get("stargazers_count") or 0),
+            now
+        ))
+
+        changed = True
+
+    return changed
 
 def main() -> int:
     args = parse_args()

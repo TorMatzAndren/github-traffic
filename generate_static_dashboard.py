@@ -302,6 +302,43 @@ textarea {
     <table id="pathsTable"></table>
   </section>
 
+  <section class="grid">
+    <div class="card">
+      <h2>Incoming Link Timeline</h2>
+      <table id="referrerTimelineTable"></table>
+    </div>
+    <div class="card">
+      <h2>Path Timeline</h2>
+      <table id="pathTimelineTable"></table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Propagation Highlights</h2>
+    <table id="propagationHighlightsTable"></table>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Referrer First-Seen Intelligence</h2>
+      <table id="referrerFirstSeenTable"></table>
+    </div>
+    <div class="card">
+      <h2>Path First-Seen Intelligence</h2>
+      <table id="pathFirstSeenTable"></table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Repository Metadata Timeline</h2>
+    <table id="metadataTimelineTable"></table>
+  </section>
+
+  <section class="card">
+    <h2>Forks / Repository Lineage</h2>
+    <table id="forksTable"></table>
+  </section>
+
   <section class="card" id="failuresCard">
     <h2>Recent Collection Failures</h2>
     <table id="failuresTable"></table>
@@ -402,6 +439,14 @@ function allRepoNames() {
   return [...new Set((DATA.repositories || []).map(r => r.repo))].sort();
 }
 
+function repositoryMetadataByRepo() {
+  const map = new Map();
+  for (const r of DATA.repositories || []) {
+    if (r && r.repo) map.set(r.repo, r);
+  }
+  return map;
+}
+
 function renderRepoSelect() {
   const repos = allRepoNames();
   const sel = document.getElementById("repoSelect");
@@ -411,6 +456,7 @@ function renderRepoSelect() {
 }
 
 function repoStats() {
+  const metaByRepo = repositoryMetadataByRepo();
   const byRepo = new Map();
   for (const r of DATA.daily_series || []) {
     if (!byRepo.has(r.repo)) byRepo.set(r.repo, []);
@@ -452,9 +498,15 @@ function repoStats() {
       .pop() || "";
 
     const events = (DATA.promotion_events || []).filter(e => e.repo === repo).length;
+    const meta = metaByRepo.get(repo) || {};
 
     return {
       repo,
+      stars: Number(meta.stars ?? meta.stargazers_count ?? 0),
+      forks: Number(meta.forks ?? meta.forks_count ?? 0),
+      watchers: Number(meta.watchers ?? meta.watchers_count ?? 0),
+      full_name: meta.full_name || "",
+      html_url: meta.html_url || "",
       days: sortedRows.length,
       lastTraffic,
       events,
@@ -516,6 +568,8 @@ function renderCards() {
       <div class="grid">
         <div><div class="kpi">${fmt(r.views)}</div><div class="muted">all-time views</div></div>
         <div><div class="kpi">${fmt(r.clones)}</div><div class="muted">all-time clones</div></div>
+        <div><div class="kpi">${fmt(r.stars)}</div><div class="muted">stars</div></div>
+        <div><div class="kpi">${fmt(r.forks)}</div><div class="muted">forks</div></div>
       </div>
       <div class="muted">7d views: ${fmt(r.last7Views)} (${signed(r.viewsDelta)}) · 7d clones: ${fmt(r.last7Clones)} (${signed(r.clonesDelta)})</div>
       <div class="muted">Velocity: ${escapeHtml(trendSymbol(r.trend))}</div>
@@ -529,12 +583,14 @@ function renderRepoTable() {
   if (badge) badge.textContent = `${rows.length} repos`;
 
   document.getElementById("repoTable").innerHTML =
-    `<tr><th>Repo</th><th>Views</th><th>Clones</th><th>7d views</th><th>Δ views</th><th>7d clones</th><th>Δ clones</th><th>Trend</th><th>Last traffic</th><th>Events</th></tr>` +
+    `<tr><th>Repo</th><th>Views</th><th>Clones</th><th>Stars</th><th>Forks</th><th>7d views</th><th>Δ views</th><th>7d clones</th><th>Δ clones</th><th>Trend</th><th>Last traffic</th><th>Events</th></tr>` +
     rows.map(r => `
       <tr onclick="selectRepo('${escapeJs(r.repo)}')" style="cursor:pointer">
         <td>${escapeHtml(r.repo)}</td>
         <td>${fmt(r.views)}</td>
         <td>${fmt(r.clones)}</td>
+        <td>${fmt(r.stars)}</td>
+        <td>${fmt(r.forks)}</td>
         <td>${fmt(r.last7Views)}</td>
         <td>${signed(r.viewsDelta)}</td>
         <td>${fmt(r.last7Clones)}</td>
@@ -639,6 +695,114 @@ function renderEvents() {
     `).join("");
 }
 
+function forkUrl(row) {
+  if (row.html_url) return row.html_url;
+  if (row.fork_full_name) return "https://github.com/" + row.fork_full_name;
+  if (row.fork_owner && row.fork_repo) return "https://github.com/" + row.fork_owner + "/" + row.fork_repo;
+  return "";
+}
+
+function renderForkTree() {
+  const repoFilter = r => selectedRepo === "ALL" || r.repo === selectedRepo;
+  const forks = (DATA.repository_forks || []).filter(repoFilter);
+
+  const byRepo = new Map();
+  for (const f of forks) {
+    if (!byRepo.has(f.repo)) byRepo.set(f.repo, []);
+    byRepo.get(f.repo).push(f);
+  }
+
+  return [...byRepo.entries()].map(([repo, rows]) => {
+    const items = rows.map(f => {
+      const url = forkUrl(f);
+      const forkName = f.fork_full_name || ((f.fork_owner || "") + "/" + (f.fork_repo || ""));
+      const label = url
+        ? `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(forkName)}</a>`
+        : escapeHtml(forkName);
+      return `<li>${label} <span class="muted">created ${(f.fork_created_at || "").slice(0, 10) || "unknown"}, pushed ${(f.pushed_at || "").slice(0, 10) || "unknown"}</span></li>`;
+    }).join("");
+    return `<div class="card"><h3>${escapeHtml(repo)} fork tree</h3><ul>${items}</ul></div>`;
+  }).join("");
+}
+
+function renderForksTable() {
+  const repoFilter = r => selectedRepo === "ALL" || r.repo === selectedRepo;
+  const forks = (DATA.repository_forks || []).filter(repoFilter);
+
+  const table = document.getElementById("forksTable");
+  if (!table) return;
+
+  table.innerHTML =
+    `<tr><th>Source repo</th><th>Fork</th><th>Owner</th><th>Created</th><th>Pushed</th><th>Branch</th><th>Fork stars</th></tr>` +
+    forks.map(f => {
+      const url = forkUrl(f);
+      const forkName = f.fork_full_name || ((f.fork_owner || "") + "/" + (f.fork_repo || ""));
+      return `
+        <tr>
+          <td>${escapeHtml(f.repo || "")}</td>
+          <td>${url ? `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(forkName)}</a>` : escapeHtml(forkName)}</td>
+          <td>${escapeHtml(f.fork_owner || "")}</td>
+          <td>${escapeHtml((f.fork_created_at || "").slice(0, 10))}</td>
+          <td>${escapeHtml((f.pushed_at || "").slice(0, 10))}</td>
+          <td>${escapeHtml(f.default_branch || "")}</td>
+          <td>${fmt(f.stargazers_count || 0)}</td>
+        </tr>
+      `;
+    }).join("");
+
+  if (!forks.length) {
+    table.innerHTML = `<tr><td class="muted">No known forks for this selection.</td></tr>`;
+  }
+
+  const treeHtml = renderForkTree();
+  if (treeHtml) {
+    table.insertAdjacentHTML("afterend", `<div class="grid">${treeHtml}</div>`);
+  }
+}
+
+function renderPropagationIntelligenceTables() {
+  const repoFilter = r => selectedRepo === "ALL" || r.repo === selectedRepo;
+
+  const highlights = (DATA.propagation_highlights || []).filter(repoFilter).slice(0, 40);
+  document.getElementById("propagationHighlightsTable").innerHTML =
+    `<tr><th>Date</th><th>Repo</th><th>Type</th><th>Subject</th><th>Count</th><th>Uniques</th></tr>` +
+    highlights.map(r => `<tr><td>${escapeHtml(r.snapshot_date_utc)}</td><td>${escapeHtml(r.repo)}</td><td>${escapeHtml(r.highlight_type)}</td><td>${escapeHtml(r.subject)}</td><td>${fmt(r.count)}</td><td>${fmt(r.uniques)}</td></tr>`).join("");
+
+  if (!highlights.length) {
+    document.getElementById("propagationHighlightsTable").innerHTML =
+      `<tr><td class="muted">No new referrers or paths detected on the latest snapshot day.</td></tr>`;
+  }
+
+  const refs = (DATA.referrer_first_seen || []).filter(repoFilter).slice(0, 40);
+  document.getElementById("referrerFirstSeenTable").innerHTML =
+    `<tr><th>Repo</th><th>Referrer</th><th>First seen</th><th>Last seen</th><th>Days</th><th>Peak</th><th>Total</th></tr>` +
+    refs.map(r => `<tr><td>${escapeHtml(r.repo)}</td><td>${escapeHtml(r.referrer)}</td><td>${escapeHtml(r.first_seen_date)}</td><td>${escapeHtml(r.last_seen_date)}</td><td>${fmt(r.days_seen)}</td><td>${fmt(r.peak_count)} / ${fmt(r.peak_uniques)}</td><td>${fmt(r.total_count)} / ${fmt(r.total_uniques)}</td></tr>`).join("");
+
+  const paths = (DATA.path_first_seen || []).filter(repoFilter).slice(0, 40);
+  document.getElementById("pathFirstSeenTable").innerHTML =
+    `<tr><th>Repo</th><th>Path</th><th>First seen</th><th>Last seen</th><th>Days</th><th>Peak</th><th>Total</th></tr>` +
+    paths.map(r => `<tr><td>${escapeHtml(r.repo)}</td><td>${escapeHtml(r.path)}</td><td>${escapeHtml(r.first_seen_date)}</td><td>${escapeHtml(r.last_seen_date)}</td><td>${fmt(r.days_seen)}</td><td>${fmt(r.peak_count)} / ${fmt(r.peak_uniques)}</td><td>${fmt(r.total_count)} / ${fmt(r.total_uniques)}</td></tr>`).join("");
+}
+
+function renderTimelineTables() {
+  const repoFilter = r => selectedRepo === "ALL" || r.repo === selectedRepo;
+
+  const refs = (DATA.referrer_timeline || []).filter(repoFilter).slice(0, 40);
+  document.getElementById("referrerTimelineTable").innerHTML =
+    `<tr><th>Date</th><th>Repo</th><th>Referrer</th><th>Count</th><th>Uniques</th></tr>` +
+    refs.map(r => `<tr><td>${escapeHtml(r.snapshot_date_utc)}</td><td>${escapeHtml(r.repo)}</td><td>${escapeHtml(r.referrer)}</td><td>${fmt(r.count)}</td><td>${fmt(r.uniques)}</td></tr>`).join("");
+
+  const paths = (DATA.path_timeline || []).filter(repoFilter).slice(0, 40);
+  document.getElementById("pathTimelineTable").innerHTML =
+    `<tr><th>Date</th><th>Repo</th><th>Path</th><th>Count</th><th>Uniques</th></tr>` +
+    paths.map(r => `<tr><td>${escapeHtml(r.snapshot_date_utc)}</td><td>${escapeHtml(r.repo)}</td><td>${escapeHtml(r.path)}</td><td>${fmt(r.count)}</td><td>${fmt(r.uniques)}</td></tr>`).join("");
+
+  const meta = (DATA.metadata_timeline || []).filter(repoFilter).slice(0, 60);
+  document.getElementById("metadataTimelineTable").innerHTML =
+    `<tr><th>Date</th><th>Repo</th><th>Stars</th><th>Forks</th><th>Watchers</th><th>Open issues</th></tr>` +
+    meta.map(r => `<tr><td>${escapeHtml(r.snapshot_date_utc)}</td><td>${escapeHtml(r.repo)}</td><td>${fmt(r.stargazers_count)}</td><td>${fmt(r.forks_count)}</td><td>${fmt(r.watchers_count)}</td><td>${fmt(r.open_issues_count)}</td></tr>`).join("");
+}
+
 function renderTables() {
   const repoFilter = r => selectedRepo === "ALL" || r.repo === selectedRepo;
 
@@ -667,6 +831,9 @@ function renderAll() {
   renderChart();
   renderEvents();
   renderTables();
+  renderForksTable();
+  renderTimelineTables();
+  renderPropagationIntelligenceTables();
 }
 
 function escapeHtml(s) {
