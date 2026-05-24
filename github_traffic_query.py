@@ -91,6 +91,7 @@ def repositories(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 github_updated_at,
                 COALESCE(stargazers_count, 0) AS stargazers_count,
                 COALESCE(watchers_count, 0) AS watchers_count,
+                COALESCE(subscribers_count, 0) AS subscribers_count,
                 COALESCE(forks_count, 0) AS forks_count,
                 COALESCE(stargazers_count, 0) AS stars,
                 COALESCE(forks_count, 0) AS forks,
@@ -137,6 +138,7 @@ def repository_inventory(conn: sqlite3.Connection, days: int | None) -> list[dic
                 r.github_updated_at,
                 COALESCE(r.stargazers_count, 0) AS stargazers_count,
                 COALESCE(r.watchers_count, 0) AS watchers_count,
+                COALESCE(r.subscribers_count, 0) AS subscribers_count,
                 COALESCE(r.forks_count, 0) AS forks_count,
                 COALESCE(r.stargazers_count, 0) AS stars,
                 COALESCE(r.forks_count, 0) AS forks,
@@ -452,6 +454,7 @@ def metadata_timeline(conn: sqlite3.Connection, repo: str | None, limit: int) ->
             r.repo,
             m.stargazers_count,
             m.watchers_count,
+            m.subscribers_count,
             m.forks_count,
             m.open_issues_count
         FROM repository_metadata_snapshots m
@@ -601,7 +604,8 @@ def repository_stars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             owner,
             repo,
             COALESCE(stargazers_count, 0) AS stargazers_count,
-            COALESCE(watchers_count, 0) AS watchers_count
+            COALESCE(watchers_count, 0) AS watchers_count,
+            COALESCE(subscribers_count, 0) AS subscribers_count
         FROM repositories
         ORDER BY stargazers_count DESC
     """).fetchall()
@@ -612,6 +616,7 @@ def repository_stars(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             "repo": r[1],
             "stars": r[2],
             "watchers": r[3],
+            "subscribers": r[4],
         }
         for r in rows
     ]

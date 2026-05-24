@@ -199,6 +199,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
             snapshot_date_utc TEXT NOT NULL,
             stargazers_count INTEGER NOT NULL,
             watchers_count INTEGER NOT NULL,
+            subscribers_count INTEGER NOT NULL DEFAULT 0,
             forks_count INTEGER NOT NULL,
             open_issues_count INTEGER NOT NULL,
             source_run_id INTEGER NOT NULL,
@@ -241,6 +242,7 @@ CREATE TABLE IF NOT EXISTS repositories (
     github_updated_at TEXT,
             stargazers_count INTEGER DEFAULT 0,
             watchers_count INTEGER DEFAULT 0,
+            subscribers_count INTEGER DEFAULT 0,
             forks_count INTEGER DEFAULT 0,
     created_at_utc TEXT NOT NULL,
     updated_at_utc TEXT NOT NULL,
@@ -350,7 +352,9 @@ CREATE TABLE IF NOT EXISTS repositories (
     ensure_column(conn, "repositories", "github_updated_at", "TEXT")
     ensure_column(conn, "repositories", "stargazers_count", "INTEGER DEFAULT 0")
     ensure_column(conn, "repositories", "watchers_count", "INTEGER DEFAULT 0")
+    ensure_column(conn, "repositories", "subscribers_count", "INTEGER DEFAULT 0")
     ensure_column(conn, "repositories", "forks_count", "INTEGER DEFAULT 0")
+    ensure_column(conn, "repository_metadata_snapshots", "subscribers_count", "INTEGER DEFAULT 0")
     ensure_column(conn, "repositories", "updated_at_utc", "TEXT")
 
     conn.executescript(
@@ -515,6 +519,7 @@ def update_repository_metadata(conn: sqlite3.Connection, repository_id: int, rep
             github_updated_at = ?,
             stargazers_count = ?,
             watchers_count = ?,
+            subscribers_count = ?,
             forks_count = ?,
             updated_at_utc = ?
         WHERE id = ?
@@ -532,6 +537,7 @@ def update_repository_metadata(conn: sqlite3.Connection, repository_id: int, rep
             repo_json.get("updated_at"),
             int(repo_json.get("stargazers_count") or 0),
             int(repo_json.get("watchers_count") or 0),
+            int(repo_json.get("subscribers_count") or 0),
             int(repo_json.get("forks_count") or repo_json.get("forks") or 0),
             now,
             repository_id,
@@ -967,6 +973,7 @@ def normalize_repository_metadata_snapshot(conn: sqlite3.Connection, run_id: int
             snapshot_date_utc,
             stargazers_count,
             watchers_count,
+            subscribers_count,
             forks_count,
             open_issues_count,
             source_run_id,
@@ -977,6 +984,7 @@ def normalize_repository_metadata_snapshot(conn: sqlite3.Connection, run_id: int
         DO UPDATE SET
             stargazers_count = excluded.stargazers_count,
             watchers_count = excluded.watchers_count,
+            subscribers_count = excluded.subscribers_count,
             forks_count = excluded.forks_count,
             open_issues_count = excluded.open_issues_count,
             source_run_id = excluded.source_run_id,
@@ -986,6 +994,7 @@ def normalize_repository_metadata_snapshot(conn: sqlite3.Connection, run_id: int
         snapshot_date,
         int(data.get("stargazers_count") or 0),
         int(data.get("watchers_count") or 0),
+        int(data.get("subscribers_count") or 0),
         int(data.get("forks_count") or data.get("forks") or 0),
         int(data.get("open_issues_count") or 0),
         run_id,

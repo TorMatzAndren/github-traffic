@@ -249,6 +249,33 @@ def regenerate_dashboard(project_dir: Path, db_path: Path) -> dict[str, Any]:
     }
 
 
+def get_summary(project_dir: Path, db_path: Path, limit: int = 100) -> dict[str, Any]:
+    query_script = project_dir / "github_traffic_query.py"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(query_script),
+            "--db",
+            str(db_path),
+            "--summary-json",
+            "--limit",
+            str(limit),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, dict):
+        raise ValueError("summary query did not return a JSON object")
+
+    payload["ok"] = True
+    payload["source"] = "github_traffic_query.py"
+    return payload
+
+
 class ApiHandler(BaseHTTPRequestHandler):
     server_version = "GitHubTrafficLocalAPI/0.1"
 
@@ -279,12 +306,21 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "service": "github_traffic_local_api",
                     "mode": "localhost-only",
                     "allowed_actions": [
+                        "summary/read",
                         "events/upsert",
                         "events/delete",
                         "dashboard/regenerate",
                     ],
                 },
             )
+            return
+
+        if self.path == "/summary":
+            try:
+                payload = get_summary(self.server.project_dir, self.server.db_path)
+                self.send_json(200, payload)
+            except Exception as exc:
+                self.send_json(500, {"ok": False, "error": str(exc)})
             return
 
         self.send_json(404, {"ok": False, "error": "not found"})
