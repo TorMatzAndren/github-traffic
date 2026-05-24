@@ -4,30 +4,24 @@
 
 ### Added
 - `subscribers_count` repository metadata support
-- `subscribers_count` snapshot history support
-- Extended metadata timeline query projections
-- Extended summary JSON metadata payloads
+- `subscribers_count` metadata snapshot support
+- `subscribers_count` summary JSON/query projection support
 
 ### Changed
-- Clarified GitHub repository watcher semantics
-- Preserved both:
-  - `watchers_count`
-  - `subscribers_count`
-- Improved repository metadata normalization
+- Preserved GitHub's `watchers_count` field for API fidelity
+- Added separate `subscribers_count` storage for the actual GitHub "watching" count
+- Extended repository metadata snapshots to include subscriber history
 
 ### Fixed
 - Corrected misleading repository watcher interpretation
-- `watchers_count` is now treated as GitHub's star-aligned watcher field
-- Actual repository watchers/subscribers are now stored separately through `subscribers_count`
+- Fixed metadata snapshot normalization so `subscribers_count` is persisted alongside stars, forks, and issues
+- Backfilled current metadata from stored raw GitHub repository API responses
 
 ### Notes
-GitHub's repository API exposes:
-- `watchers_count`
-- `stargazers_count`
-- `subscribers_count`
+GitHub's repository API exposes both `watchers_count` and `subscribers_count`.
 
 For repositories:
 - `watchers_count` mirrors `stargazers_count`
-- `subscribers_count` represents actual repository watchers/subscribers
+- `subscribers_count` represents the actual GitHub "watching" count shown in the UI
 
-GTI now preserves all three explicitly for accurate observability and analysis.
+GTI now preserves both values explicitly so repository attention metrics are not conflated.

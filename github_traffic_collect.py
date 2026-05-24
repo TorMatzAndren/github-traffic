@@ -857,7 +857,7 @@ def normalize_popular_paths(conn: sqlite3.Connection, run_id: int, repository_id
             INSERT INTO popular_paths_snapshot (
                 repository_id, snapshot_date_utc, path, title, count, uniques, source_run_id, updated_at_utc
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(repository_id, snapshot_date_utc, path)
             DO UPDATE SET
                 title = excluded.title,
@@ -979,7 +979,7 @@ def normalize_repository_metadata_snapshot(conn: sqlite3.Connection, run_id: int
             source_run_id,
             updated_at_utc
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(repository_id, snapshot_date_utc)
         DO UPDATE SET
             stargazers_count = excluded.stargazers_count,
